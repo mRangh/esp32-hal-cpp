@@ -1,4 +1,4 @@
-# esp32-peripheral-drivers
+# ESP32 - Hardware Abstaction Layer
 
 A lightweight, object-oriented C++ hardware abstraction library for ESP32, built on top of **ESP-IDF**. Provides clean, reusable driver classes for common peripherals — digital I/O, analog inputs, PWM servos, and ultrasonic sensors — with minimal boilerplate.
 
@@ -10,7 +10,6 @@ A lightweight, object-oriented C++ hardware abstraction library for ESP32, built
 - Supports digital inputs/outputs, analog reading, servo control, and ultrasonic distance sensing
 - Built-in debounce logic for buttons
 - Configurable pull-up/pull-down resistors
-- Header-only — just include and go
 
 ---
 
@@ -24,10 +23,10 @@ A lightweight, object-oriented C++ hardware abstraction library for ESP32, built
 
 ## Installation
 
-Copy `hardware_drivers.hpp` into your project's `main/` or `components/` directory, then include it:
+Copy `esp32_hal.cpp` and `esp32_hal.hpp` into your project's `main/`, `components/` or `lib/` directory, then include it:
 
 ```cpp
-#include "hardware_drivers.hpp"
+#include <esp32_hal.hpp>
 ```
 
 Make sure your `CMakeLists.txt` links the required ESP-IDF components:
@@ -143,11 +142,11 @@ int raw = pot.read(); // 0–4095
 
 ---
 
-### `Ultrassonic`
+### `Ultrasonic`
 Reads distance in centimeters using an **HC-SR04** (or compatible) ultrasonic sensor. Returns `999.0` on timeout.
 
 ```cpp
-Ultrassonic sensor(GPIO_NUM_12, GPIO_NUM_13); // trig, echo
+Ultrasonic sensor(GPIO_NUM_12, GPIO_NUM_13); // trig, echo
 sensor.init();
 float distance = sensor.read_cm();
 ```
