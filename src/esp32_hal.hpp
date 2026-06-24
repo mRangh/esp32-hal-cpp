@@ -31,6 +31,18 @@
 #include <algorithm>
 #include <cstdio>
 
+#define CommandReg    0x01
+#define FIFODataReg   0x09
+#define FIFOLevelReg  0x0A
+#define BitFramingReg 0x0D
+#define ModeReg       0x14
+#define TxControlReg  0x14
+#define VersionReg    0x37
+
+#define PCD_RECAL_IDLE  0x00
+#define PCD_TRANSCEIVE  0x0C
+#define PICC_REQIDL     0x26
+
 class DigitalInput {
 
     public:
@@ -127,6 +139,33 @@ class Ultrasonic {
         gpio_num_t trig_pin;
         gpio_num_t echo_pin;
         uint32_t timeout;
+};
+
+struct mfrc_522_config{
+    gpio_num_t mosi;
+    gpio_num_t miso;
+    gpio_num_t sclk;
+    gpio_num_t spics;
+    gpio_num_t reset;
+};
+class MFRC_522{
+    
+    public:
+
+        MFRC_522(const mfrc_522_config& config);
+        esp_err_t init();
+        bool check();
+        std::string read_uid();
+        void stop_reading();
+    
+    private:
+
+        const mfrc_522_config _config;
+        spi_device_handle_t _spi_handle;
+
+        void write_regist(uint8_t reg, uint8_t value);
+        uint8_t read_regist(uint8_t reg);
+        void execute(uint8_t command);
 };
 
 #endif

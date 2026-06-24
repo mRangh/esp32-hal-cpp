@@ -189,3 +189,115 @@ float Ultrasonic::read_cm() {
 
     return (float)echo_duration * 0.0343f / 2.0f;
 }
+
+MFRC_522::MFRC_522(const mfrc_522_config& config) : _config(config), _spi_handle(nullptr) {}
+
+esp_err_t MFRC_522::init() {
+    esp_err_t ret;
+
+    spi_bus_config_t buscfg = {};
+    buscfg.mosi_io_num    = _config.mosi;
+    buscfg.miso_io_num    = _config.miso;
+    buscfg.sclk_io_num    = _config.sclk;
+    buscfg.quadwp_io_num  = -1;
+    buscfg.quadhd_io_num  = -1;
+
+    ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
+    if (ret != ESP_OK) return ret;
+
+    spi_device_interface_config_t devcfg = {};
+    devcfg.clock_speed_hz  = 4 * 1000 * 1000;
+    devcfg.mode            = 0;
+    devcfg.spics_io_num    = _config.spics;
+    devcfg.queue_size      = 7;
+
+    ret = spi_bus_add_device(SPI2_HOST, &devcfg, &_spi_handle);
+    if (ret != ESP_OK) return ret;
+
+    gpio_reset_pin(_config.reset);
+    gpio_set_direction(_config.reset, GPIO_MODE_OUTPUT);
+    gpio_set_level(_config.reset, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    write_regist(CommandReg, 0x0F);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    write_regist(ModeReg, 0x3D);
+    uint8_t tx_ctrl = read_regist(TxControlReg);
+    if ((tx_ctrl & 0x03) != 0x03) {
+        write_regist(TxControlReg, tx_ctrl | 0x03);
+    }
+
+    ESP_LOGI(TAG, "MFRC522 Initialized. Version: 0x%02X", read_regist(VersionReg));
+    return ESP_OK;
+}
+
+void MFRC_522::write_regist(uint8_t reg, uint8_t value) {
+    uint8_t data[2];
+    data[0] = (reg << 1) & 0x7E;
+    data[1] = value;
+
+    spi_transaction_t t = {};
+    t.length = 16;
+    t.tx_buffer = data;
+    spi_device_polling_transmit(_spi_handle, &t);
+}
+
+uint8_t MFRC_522::read_regist(uint8_t reg) {
+    uint8_t tx_data[2] = { static_cast<uint8_t>(((reg << 1) & 0x7E) | 0x80), 0 };
+    uint8_t rx_data[2] = {0};
+
+    spi_transaction_t t = {};
+    t.length = 16;
+    t.tx_buffer = tx_data;
+    t.rx_buffer = rx_data;
+    spi_device_polling_transmit(_spi_handle, &t);
+
+    return rx_data[1];
+}
+
+void MFRC_522::execute(uint8_t command) {
+    write_regist(CommandReg, command);
+}
+
+bool MFRC_522::check() {
+    execute(PCD_RECAL_IDLE);
+    
+    write_regist(FIFOLevelReg, 0x80); 
+    
+    write_regist(BitFramingReg, 0x07);
+    
+    write_regist(FIFODataReg, PICC_REQIDL);
+    
+    execute(PCD_TRANSCEIVE);
+    
+    vTaskDelay(pdMS_TO_TICKS(5));
+    
+    uint8_t n = read_regist(FIFOLevelReg);
+    
+    return (n > 0);
+}
+
+std::string MFRC_522::read_uid() {
+    char uid_str[32];
+    uint8_t uid_bytes[4] = {0x00, 0x00, 0x00, 0x00};
+    
+    uint8_t n = read_regist(FIFOLevelReg);
+    
+    if (n >= 4) {
+        for (int i = 0; i < 4; i++) {
+            uid_bytes[i] = read_regist(FIFODataReg);
+        }
+    } else {
+        return "";
+    }
+
+    snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X", 
+             uid_bytes[0], uid_bytes[1], uid_bytes[2], uid_bytes[3]);
+             
+    return std::string(uid_str);
+}
+
+void MFRC_522::stop_reading() {
+    execute(PCD_RECAL_IDLE);
+}
