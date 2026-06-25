@@ -1,21 +1,25 @@
-# ESP32 - Hardware Abstaction Layer
+# ESP32 HAL C++ Library
 
-A lightweight, object-oriented C++ hardware abstraction library for ESP32, built on top of **ESP-IDF**. Provides clean, reusable driver classes for common peripherals — digital I/O, analog inputs, PWM servos, and ultrasonic sensors — with minimal boilerplate.
+A lightweight, object-oriented C++ hardware abstraction layer for ESP32, built on top of **ESP-IDF**. This library provides reusable classes for digital and analog I/O, PWM servo control, ultrasonic distance sensing, and MFRC522 RFID reader support.
 
 ---
 
 ## Features
 
-- Object-oriented C++ API (classes, inheritance, method chaining)
-- Supports digital inputs/outputs, analog reading, servo control, and ultrasonic distance sensing
-- Built-in debounce logic for buttons
-- Configurable pull-up/pull-down resistors
+- Object-oriented C++ API with self-contained peripheral classes
+- Digital input and output support
+- Analog input support via ADC1 (12-bit)
+- Debounced button toggle behavior
+- PWM servo control using LEDC
+- HC-SR04-compatible ultrasonic sensor support
+- MFRC522 RFID reader support over SPI
+- Automatic GPIO and peripheral initialization in constructors
 
 ---
 
 ## Requirements
 
-- ESP32 board (tested with ESP32 DevKit)
+- ESP32 board
 - [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/) v5.x or later
 - C++11 or later
 
@@ -23,65 +27,63 @@ A lightweight, object-oriented C++ hardware abstraction library for ESP32, built
 
 ## Installation
 
-Copy `esp32_hal.cpp` and `esp32_hal.hpp` into your project's `main/`, `components/` or `lib/` directory, then include it:
+Copy `src/esp32_hal.cpp` and `src/esp32_hal.hpp` into your project's `main/`, `components/`, or `lib/` directory, then include it:
 
 ```cpp
 #include <esp32_hal.hpp>
 ```
 
-Make sure your `CMakeLists.txt` links the required ESP-IDF components:
+Ensure your `CMakeLists.txt` registers the component and requires the ESP-IDF components used by the library:
 
 ```cmake
 idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS "."
-    REQUIRES driver esp_timer esp_adc
+    REQUIRES driver esp_adc freertos esp_timer spi_master esp_log
 )
 ```
 
 ---
 
-## Classes
+## API Overview
 
 ### `DigitalInput`
-Configures a GPIO pin as a digital input with optional pull-up or pull-down resistor.
+Configures a GPIO pin as a digital input with optional pull resistor.
 
 ```cpp
-DigitalInput btn(GPIO_NUM_4, GPIO_PULLUP_ONLY);
-btn.init();
-int state = btn.read(); // returns 0 or 1
+DigitalInput input(GPIO_NUM_4, GPIO_PULLUP_ONLY);
+int state = input.read();
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `port` | `int` | GPIO pin number |
-| `pull` | `gpio_pull_mode_t` | `GPIO_PULLDOWN_ONLY` (default), `GPIO_PULLUP_ONLY`, or `GPIO_FLOATING` |
+| `pull` | `gpio_pull_mode_t` | `GPIO_PULLDOWN_ONLY`, `GPIO_PULLUP_ONLY`, or `GPIO_FLOATING`(default) |
 
 ---
 
 ### `AnalogInput`
-Reads a 12-bit ADC value (0–4095) from a GPIO pin using `ADC_UNIT_1`.
+Reads a 12-bit ADC value from ADC1.
 
 ```cpp
 AnalogInput sensor(GPIO_NUM_34);
-sensor.init();
-int raw = sensor.read(); // returns 0–4095
+int raw = sensor.read();
 ```
 
-Supported pins: `GPIO_NUM_32`, `GPIO_NUM_33`, `GPIO_NUM_34`, `GPIO_NUM_35`.
+Supported ADC pins: `GPIO_NUM_32 ~ 39`.
 
 ---
 
 ### `Output`
-Configures a GPIO pin as a digital output. Automatically initializes on construction.
+Configures a GPIO pin as a digital output.
 
 ```cpp
 Output led(GPIO_NUM_2);
-led.write(true);  // HIGH
-led.write(false); // LOW
+led.write(true);
 ```
 
-`write()` returns a reference to itself, enabling method chaining:
+`write()` returns a reference to the object, allowing method chaining.
+
 ```cpp
 led.write(true).write(false);
 ```
@@ -89,18 +91,17 @@ led.write(true).write(false);
 ---
 
 ### `Switch`
-Extends `DigitalInput`. Represents a simple on/off switch. Same API as `DigitalInput`.
+A semantic subclass of `DigitalInput` for on/off switch inputs.
 
 ```cpp
 Switch sw(GPIO_NUM_5);
-sw.init();
-bool state = sw.read();
+int value = sw.read();
 ```
 
 ---
 
 ### `Button`
-Extends `DigitalInput`. Adds **debounced toggle** logic — each press flips the internal state, with a 50 ms debounce delay.
+A debounced digital input with toggle semantics. Adds **debounced toggle** logic — each press flips the internal state, with a 50 ms debounce delay.
 
 ```cpp
 Button btn(GPIO_NUM_14);
@@ -132,61 +133,114 @@ servo.move(45).move(135);
 ---
 
 ### `Potentiometer`
-Extends `AnalogInput`. Reads a potentiometer's wiper position as a raw 12-bit value.
+A semantic subclass of `AnalogInput` for potentiometer inputs.
 
 ```cpp
 Potentiometer pot(GPIO_NUM_32);
-pot.init();
-int raw = pot.read(); // 0–4095
+int value = pot.read(); // 0 - 4095
 ```
 
 ---
 
 ### `Ultrasonic`
-Reads distance in centimeters using an **HC-SR04** (or compatible) ultrasonic sensor. Returns `999.0` on timeout.
+Reads distance in centimeters from an HC-SR04-compatible ultrasonic sensor. Returns `999.0f` on timeout.
 
 ```cpp
-Ultrasonic sensor(GPIO_NUM_12, GPIO_NUM_13); // trig, echo
-sensor.init();
-float distance = sensor.read_cm();
+Ultrasonic sonar(GPIO_NUM_12, GPIO_NUM_13);
+float distance = sonar.read_cm();
 ```
+Default timeout: `30000 µs` (~5 m range).
 
-Default timeout: `12000 µs` (~2 m range).
+---
+
+### `MFRC_522`
+Basic MFRC522 RFID reader support over SPI.
+
+```cpp
+mfrc_522_config config = {
+    .mosi = GPIO_NUM_23,
+    .miso = GPIO_NUM_19,
+    .sclk = GPIO_NUM_18,
+    .spics = GPIO_NUM_5,
+    .reset = GPIO_NUM_22
+};
+
+MFRC_522 reader(config);
+if (reader.check()) {
+    std::string uid = reader.read_uid();
+}
+reader.stop_reading();
+```
 
 ---
 
 ## Example
 
 ```cpp
-#include "hardware_drivers.hpp"
+#include <esp32_hal.hpp>
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 extern "C" void app_main() {
     Button btn(GPIO_NUM_14);
-    btn.init();
-
     Output led(GPIO_NUM_2);
     Servo servo(GPIO_NUM_18, LEDC_CHANNEL_0);
-
     Potentiometer pot(GPIO_NUM_32);
-    pot.init();
+    Ultrasonic sonar(GPIO_NUM_12, GPIO_NUM_13);
 
-    Ultrassonic sonar(GPIO_NUM_12, GPIO_NUM_13);
-    sonar.init();
+    // Initialization for MFRC522
+    mfrc_522_config rfid_cfg = {
+        .mosi  = GPIO_NUM_23,
+        .miso  = GPIO_NUM_19,
+        .sclk  = GPIO_NUM_18,
+        .spics = GPIO_NUM_5,
+        .reset = GPIO_NUM_22
+    };
+    MFRC_522 rfid(rfid_cfg);
+    
+    if (rfid.init() != ESP_OK) {
+        printf("Failed to initialize MFRC_522\n");
+    }
 
     while (true) {
+        // Toggle LED based on button press
         led.write(btn.toggle());
 
+        // Read potentiometer and move servo
         int angle = (pot.read() * 180) / 4095;
         servo.move(angle);
 
+        // Read ultrasonic sensor
         float dist = sonar.read_cm();
         printf("Distance: %.2f cm\n", dist);
+
+        // Check for RFID cards
+        if (rfid.check()) {
+            std::string uid = rfid.read_uid();
+            if (!uid.empty()) {
+                printf("Card Detected! UID: %s\n", uid.c_str());
+            }
+            rfid.stop_reading();
+        }
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
+```
+
+---
+
+## Build
+
+Add the library source files to your component and include the required ESP-IDF dependencies.
+
+```cmake
+idf_component_register(
+    SRCS "main.cpp"
+    INCLUDE_DIRS "."
+    REQUIRES driver esp_adc freertos esp_timer spi_master esp_log
+)
 ```
 
 ---

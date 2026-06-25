@@ -15,23 +15,36 @@
  */ 
 
 #include "esp32_hal.hpp"
+#include "esp_log.h"
+
+static const char *MFRC_522_TAG = "MFRC522";
+
+adc_oneshot_unit_handle_t AnalogInput::_adc_handle = nullptr;
+bool AnalogInput::_unit_initialized = false;
+bool Ultrasonic::_isr_service_installed = false;
+bool MFRC_522::_spi_bus_initialized = false;
+bool Servo::_timer_initialized = false;
+
+//============================================
+// DIGITAL INPUT
+//============================================
 
 DigitalInput::DigitalInput(int port, gpio_pull_mode_t pull){
-    pin = (gpio_num_t)port;
-    pull_mode = pull;
-    value = 0;
+    _pin = (gpio_num_t)port;
+    _pull_mode = pull;
+    init();
 }
 
 void DigitalInput::init(){
     gpio_config_t io_conf    = {};
     io_conf.intr_type        = GPIO_INTR_DISABLE;
     io_conf.mode             = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask     = (1ULL << pin);
+    io_conf.pin_bit_mask     = (1ULL << _pin);
 
-    if (pull_mode == GPIO_PULLUP_ONLY){
+    if (_pull_mode == GPIO_PULLUP_ONLY){
         io_conf.pull_up_en   = GPIO_PULLUP_ENABLE;
         io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    } else if (pull_mode == GPIO_PULLDOWN_ONLY) {
+    } else if (_pull_mode == GPIO_PULLDOWN_ONLY) {
         io_conf.pull_up_en   = GPIO_PULLUP_DISABLE;
         io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
     } else {
@@ -41,43 +54,53 @@ void DigitalInput::init(){
 }
 
 int DigitalInput::read(){
-    return gpio_get_level(pin);
+    return gpio_get_level(_pin);
 }
 
+//============================================
+// ANALOG INPUT
+//============================================
+
 AnalogInput::AnalogInput(int port){
-    pin = (gpio_num_t)port;
-    value = 0;
-    adc_handle = nullptr;
+    _pin = (gpio_num_t)port;
+    init();
 }
 
 void AnalogInput::init(){
-    if (adc_handle != nullptr) return;
-    if (pin == GPIO_NUM_32) adc_channel = ADC_CHANNEL_4;
-    else if (pin == GPIO_NUM_33) adc_channel = ADC_CHANNEL_5;
-    else if (pin == GPIO_NUM_34) adc_channel = ADC_CHANNEL_6;
-    else if (pin == GPIO_NUM_35) adc_channel = ADC_CHANNEL_7;
-    else adc_channel = ADC_CHANNEL_0;
+    if (_pin == GPIO_NUM_32) _adc_channel = ADC_CHANNEL_4;
+    else if (_pin == GPIO_NUM_33) _adc_channel = ADC_CHANNEL_5;
+    else if (_pin == GPIO_NUM_34) _adc_channel = ADC_CHANNEL_6;
+    else if (_pin == GPIO_NUM_35) _adc_channel = ADC_CHANNEL_7;
+    else if (_pin == GPIO_NUM_36) _adc_channel = ADC_CHANNEL_0;
+    else if (_pin == GPIO_NUM_37) _adc_channel = ADC_CHANNEL_1;
+    else if (_pin == GPIO_NUM_38) _adc_channel = ADC_CHANNEL_2;
+    else _adc_channel = ADC_CHANNEL_3;
 
-    adc_oneshot_unit_init_cfg_t init_config = {};
-    init_config.unit_id = ADC_UNIT_1;
-    adc_oneshot_new_unit(&init_config, &adc_handle);
+    if (!_unit_initialized) {
+        adc_oneshot_unit_init_cfg_t init_config = {};
+        init_config.unit_id = ADC_UNIT_1;
+        adc_oneshot_new_unit(&init_config, &_adc_handle);
+        _unit_initialized = true;
+    }
 
     adc_oneshot_chan_cfg_t config = {};
     config.bitwidth = ADC_BITWIDTH_12;
     config.atten = ADC_ATTEN_DB_12; 
-    adc_oneshot_config_channel(adc_handle, adc_channel, &config);
+    adc_oneshot_config_channel(_adc_handle, _adc_channel, &config);
 }
 
 int AnalogInput::read(){
     int raw_value = 0;
-    adc_oneshot_read(adc_handle, adc_channel, &raw_value);
-    value = raw_value;
-    return value;
+    adc_oneshot_read(_adc_handle, _adc_channel, &raw_value);
+    return raw_value;
 }
 
+//============================================
+// OUTPUT
+//============================================
+
 Output::Output(int port){
-    pin = (gpio_num_t)port;
-    value = false;
+    _pin = (gpio_num_t)port;
     init();
 }
 
@@ -85,57 +108,75 @@ void Output::init(){
     gpio_config_t io_conf = {};
     io_conf.intr_type     = GPIO_INTR_DISABLE;
     io_conf.mode          = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask  = (1ULL << pin);
+    io_conf.pin_bit_mask  = (1ULL << _pin);
     io_conf.pull_up_en    = GPIO_PULLUP_DISABLE;
     io_conf.pull_down_en  = GPIO_PULLDOWN_DISABLE;
     gpio_config(&io_conf);
 }
 
 Output& Output::write(bool src){
-    value = src;
-    gpio_set_level(pin, value);
+    gpio_set_level(_pin, src);
     return *this;
 }
 
+//============================================
+// SWITCH
+//============================================
+
 Switch::Switch(int port, gpio_pull_mode_t pull)
     : DigitalInput(port, pull) {}
+
+    //Semantical class
+
+//============================================
+// BUTTON
+//============================================
 
 Button::Button(int port, gpio_pull_mode_t pull)
     : DigitalInput(port, pull) {}
 
 bool Button::toggle(){
-    actual_state = read();
+    _actual_state = read();
     TickType_t current_time = xTaskGetTickCount();
     const TickType_t debounce_delay = pdMS_TO_TICKS(50);
-    if (actual_state == 1 && last_state == 0) {
-        if (current_time - last_debounce_time > debounce_delay) {
-            switch_state = !switch_state;
-            last_debounce_time = current_time;
+    if (_actual_state == 1 && _last_state == 0) {
+        if (current_time - _last_debounce_time > debounce_delay) {
+            _switch_state = !_switch_state;
+            _last_debounce_time = current_time;
         }
     }
-    last_state = actual_state;
-    value = switch_state;
-    return value;
+    _last_state = _actual_state;
+    return _switch_state;
 }
 
-Servo::Servo(int port, ledc_channel_t ch) {
-    pin = (gpio_num_t)port;
-    channel = ch;
-    current_angle = 0;
+//============================================
+// SERVO
+//============================================
 
-    ledc_timer_config_t ledc_timer = {};
-    ledc_timer.speed_mode          = LEDC_LOW_SPEED_MODE;
-    ledc_timer.timer_num           = LEDC_TIMER_0;
-    ledc_timer.duty_resolution     = LEDC_TIMER_13_BIT;
-    ledc_timer.freq_hz             = 50;
-    ledc_timer.clk_cfg             = LEDC_AUTO_CLK;
-    ledc_timer_config(&ledc_timer);
+Servo::Servo(int port, ledc_channel_t ch) {
+    _pin = (gpio_num_t)port;
+    _channel = ch;
+    _current_angle = 0;
+    init();
+}
+
+void Servo::init(){
+    if (!_timer_initialized) {
+        ledc_timer_config_t ledc_timer = {};
+        ledc_timer.speed_mode          = LEDC_LOW_SPEED_MODE;
+        ledc_timer.timer_num           = LEDC_TIMER_0;
+        ledc_timer.duty_resolution     = LEDC_TIMER_13_BIT;
+        ledc_timer.freq_hz             = 50;
+        ledc_timer.clk_cfg             = LEDC_AUTO_CLK;
+        ledc_timer_config(&ledc_timer);
+        _timer_initialized = true;
+    }
 
     ledc_channel_config_t ledc_channel = {};
     ledc_channel.speed_mode     = LEDC_LOW_SPEED_MODE;
-    ledc_channel.channel        = channel;
+    ledc_channel.channel        = _channel;
     ledc_channel.timer_sel      = LEDC_TIMER_0;
-    ledc_channel.gpio_num       = pin;
+    ledc_channel.gpio_num       = _pin;
     ledc_channel.duty           = 0;
     ledc_channel.hpoint         = 0;
     ledc_channel_config(&ledc_channel);
@@ -144,66 +185,138 @@ Servo::Servo(int port, ledc_channel_t ch) {
 Servo& Servo::move(int angle){
     if (angle < 0) angle = 0;
     if (angle > 180) angle = 180;
-    current_angle = angle;
+    _current_angle = angle;
 
     uint32_t duty = 205 + ((angle * (1024 - 205))/180);
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, _channel, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, _channel);
 
     return *this;
 }
 
-Potentiometer::Potentiometer(int port) : AnalogInput(port) {}
+//============================================
+// POTENTIOMETER
+//============================================
+
+Potentiometer::Potentiometer(int port)
+    : AnalogInput(port) {}
+
+    //Semantical class
+
+//============================================
+// ULTRASONIC
+//============================================
 
 Ultrasonic::Ultrasonic(int trig_port, int echo_port)
-    : trig_pin((gpio_num_t)trig_port), echo_pin((gpio_num_t)echo_port), timeout(12000) {}
+    : _trig_pin((gpio_num_t)trig_port), _echo_pin((gpio_num_t)echo_port),
+      _echo_semaphore(nullptr), _echo_start(0), _echo_duration(0) { init(); }
+
+Ultrasonic::~Ultrasonic() {
+    if (_echo_semaphore != nullptr) {
+        vSemaphoreDelete(_echo_semaphore);
+    }
+    gpio_isr_handler_remove(_echo_pin);
+}
+
+void IRAM_ATTR Ultrasonic::_gpio_isr_handler(void* arg) {
+    Ultrasonic* sensor = static_cast<Ultrasonic*>(arg);
+    
+    uint32_t level = gpio_get_level(sensor->_echo_pin);
+    
+    if (level == 1) {
+        sensor->_echo_start = esp_timer_get_time();
+    } else {
+        uint64_t now = esp_timer_get_time();
+        if (now > sensor->_echo_start) {
+            sensor->_echo_duration = now - sensor->_echo_start;
+        }
+        
+        BaseType_t high_task_wakeup = pdFALSE;
+        xSemaphoreGiveFromISR(sensor->_echo_semaphore, &high_task_wakeup);
+        
+        if (high_task_wakeup) {
+            portYIELD_FROM_ISR();
+        }
+    }
+}
 
 void Ultrasonic::init() {
     gpio_config_t io_conf = {};
     io_conf.intr_type     = GPIO_INTR_DISABLE;
     io_conf.mode          = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask  = (1ULL << trig_pin);
+    io_conf.pin_bit_mask  = (1ULL << _trig_pin);
     gpio_config(&io_conf);
-    gpio_set_level(trig_pin, 0);
+    gpio_set_level(_trig_pin, 0);
 
+    if (_echo_semaphore == nullptr) {
+        _echo_semaphore = xSemaphoreCreateBinary();
+    }
+
+    io_conf.intr_type     = GPIO_INTR_ANYEDGE;
     io_conf.mode          = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = (1ULL << echo_pin);
+    io_conf.pin_bit_mask  = (1ULL << _echo_pin);
+    io_conf.pull_up_en    = GPIO_PULLUP_DISABLE;
+    io_conf.pull_down_en  = GPIO_PULLDOWN_DISABLE;
     gpio_config(&io_conf);
+
+    if (!_isr_service_installed) {
+        gpio_install_isr_service(0); 
+        _isr_service_installed = true;
+    }
+
+    gpio_isr_handler_add(_echo_pin, _gpio_isr_handler, this);
 }
 
 float Ultrasonic::read_cm() {
-    gpio_set_level(trig_pin, 1);
+    xSemaphoreTake(_echo_semaphore, 0);
+    
+    gpio_set_level(_trig_pin, 1);
     ets_delay_us(10);
-    gpio_set_level(trig_pin, 0);
+    gpio_set_level(_trig_pin, 0);
 
-    uint64_t start_time = esp_timer_get_time();
-    while (gpio_get_level(echo_pin) == 0) {
-        if (esp_timer_get_time() - start_time > timeout) return 999.0f;
+    if (xSemaphoreTake(_echo_semaphore, pdMS_TO_TICKS(30)) == pdTRUE) {
+        return (float)_echo_duration * 0.0343f / 2.0f;
+    } else {
+        return 999.0f;
     }
-
-    uint64_t echo_start = esp_timer_get_time();
-    while (gpio_get_level(echo_pin) == 1) {
-        if (esp_timer_get_time() - echo_start > timeout) return 999.0f;
-    }
-    uint64_t echo_duration = esp_timer_get_time() - echo_start;
-
-    return (float)echo_duration * 0.0343f / 2.0f;
 }
 
-MFRC_522::MFRC_522(const mfrc_522_config& config) : _config(config), _spi_handle(nullptr) {}
+//============================================
+// MFRC_522
+//============================================
+
+namespace {
+    constexpr uint8_t CommandReg     = 0x01;
+    constexpr uint8_t FIFODataReg    = 0x09;
+    constexpr uint8_t FIFOLevelReg   = 0x0A;
+    constexpr uint8_t BitFramingReg  = 0x0D;
+    constexpr uint8_t ModeReg        = 0x11;
+    constexpr uint8_t TxControlReg   = 0x14;
+    constexpr uint8_t VersionReg     = 0x37;
+
+    constexpr uint8_t PCD_Idle       = 0x00;
+    constexpr uint8_t PCD_Transceive = 0x0C;
+    constexpr uint8_t PICC_REQIDL    = 0x26;
+}
+
+MFRC_522::MFRC_522(const mfrc_522_config& config) : _config(config), _spi_handle(nullptr) { init(); }
 
 esp_err_t MFRC_522::init() {
     esp_err_t ret;
 
-    spi_bus_config_t buscfg = {};
-    buscfg.mosi_io_num    = _config.mosi;
-    buscfg.miso_io_num    = _config.miso;
-    buscfg.sclk_io_num    = _config.sclk;
-    buscfg.quadwp_io_num  = -1;
-    buscfg.quadhd_io_num  = -1;
+    if(!_spi_bus_initialized) {
+        spi_bus_config_t buscfg = {};
+        buscfg.mosi_io_num    = _config.mosi;
+        buscfg.miso_io_num    = _config.miso;
+        buscfg.sclk_io_num    = _config.sclk;
+        buscfg.quadwp_io_num  = -1;
+        buscfg.quadhd_io_num  = -1;
 
-    ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
-    if (ret != ESP_OK) return ret;
+        ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
+        if (ret != ESP_OK) return ret;
+
+        _spi_bus_initialized = true;
+    }
 
     spi_device_interface_config_t devcfg = {};
     devcfg.clock_speed_hz  = 4 * 1000 * 1000;
@@ -228,7 +341,7 @@ esp_err_t MFRC_522::init() {
         write_regist(TxControlReg, tx_ctrl | 0x03);
     }
 
-    ESP_LOGI(TAG, "MFRC522 Initialized. Version: 0x%02X", read_regist(VersionReg));
+    ESP_LOGI(MFRC_522_TAG, "MFRC522 Initialized. Version: 0x%02X", read_regist(VersionReg));
     return ESP_OK;
 }
 
@@ -261,15 +374,12 @@ void MFRC_522::execute(uint8_t command) {
 }
 
 bool MFRC_522::check() {
-    execute(PCD_RECAL_IDLE);
+    execute(PCD_Idle);
     
     write_regist(FIFOLevelReg, 0x80); 
-    
-    write_regist(BitFramingReg, 0x07);
-    
     write_regist(FIFODataReg, PICC_REQIDL);
-    
-    execute(PCD_TRANSCEIVE);
+    execute(PCD_Transceive);
+    write_regist(BitFramingReg, 0x87);
     
     vTaskDelay(pdMS_TO_TICKS(5));
     
@@ -299,5 +409,5 @@ std::string MFRC_522::read_uid() {
 }
 
 void MFRC_522::stop_reading() {
-    execute(PCD_RECAL_IDLE);
+    execute(PCD_Idle);
 }

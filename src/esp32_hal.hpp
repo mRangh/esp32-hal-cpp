@@ -17,71 +17,66 @@
 #ifndef ESP32_HAL_HPP
 #define ESP32_HAL_HPP
 
-#ifdef __cplusplus
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
-#include "esp_timer.h"
+#include "driver/spi_master.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_err.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "rom/ets_sys.h"
+
 #include <string>
-#include <vector>
-#include <algorithm>
 #include <cstdio>
-
-#define CommandReg    0x01
-#define FIFODataReg   0x09
-#define FIFOLevelReg  0x0A
-#define BitFramingReg 0x0D
-#define ModeReg       0x14
-#define TxControlReg  0x14
-#define VersionReg    0x37
-
-#define PCD_RECAL_IDLE  0x00
-#define PCD_TRANSCEIVE  0x0C
-#define PICC_REQIDL     0x26
 
 class DigitalInput {
 
     public:
 
-        gpio_num_t pin;
-        gpio_pull_mode_t pull_mode;
-        bool value;
-
         virtual ~DigitalInput() = default;
         DigitalInput(int port, gpio_pull_mode_t pull = GPIO_PULLDOWN_ONLY);
-        void init();
         virtual int read();
+
+    private:
+    
+        gpio_num_t _pin;
+        gpio_pull_mode_t _pull_mode;
+
+        void init();
 };
 
 class AnalogInput {
     
     public:
-    
-        gpio_num_t pin;
-        int value;
-        adc_oneshot_unit_handle_t adc_handle;
-        adc_channel_t adc_channel;
 
         virtual ~AnalogInput() = default;
         AnalogInput(int port);
-        void init();
         virtual int read();
+
+    private:
+
+        gpio_num_t _pin;
+        static adc_oneshot_unit_handle_t _adc_handle;
+        adc_channel_t _adc_channel;
+        static bool _unit_initialized;
+
+        void init();
 };
 
 class Output {
 
     public:
 
-        gpio_num_t pin;
-        bool value;
-
         Output(int port);
-        void init();
         Output& write(bool src);
+
+    private:
+
+        gpio_num_t _pin;
+
+        void init();
 };
 
 class Switch : public DigitalInput {
@@ -101,22 +96,30 @@ class Button : public DigitalInput {
 
     private:
 
-        TickType_t last_debounce_time = 0;
-        bool switch_state = 0;
-        bool last_state = 0;
-        bool actual_state = 0;
+        TickType_t _last_debounce_time = 0;
+        bool _switch_state = 0;
+        bool _last_state = 0;
+        bool _actual_state = 0;
 };
 
 class Servo {
 
     public:
 
-        gpio_num_t pin;
-        ledc_channel_t channel;
-        int current_angle;
-
         Servo(int port, ledc_channel_t ch = LEDC_CHANNEL_0);
         Servo& move(int angle);
+
+    protected:
+
+        int _current_angle;
+
+    private:
+
+        gpio_num_t _pin;
+        ledc_channel_t _channel;
+        static bool _timer_initialized;
+
+        void init();
 };
 
 class Potentiometer : public AnalogInput {
@@ -129,16 +132,23 @@ class Potentiometer : public AnalogInput {
 class Ultrasonic {
 
     public:
-    
+
+        ~Ultrasonic();
         Ultrasonic(int trig_port, int echo_port);
-        void init() ;
         float read_cm();
     
     private:
 
-        gpio_num_t trig_pin;
-        gpio_num_t echo_pin;
-        uint32_t timeout;
+        gpio_num_t _trig_pin;
+        gpio_num_t _echo_pin;
+        SemaphoreHandle_t _echo_semaphore;
+        volatile uint64_t _echo_start;
+        volatile uint64_t _echo_duration;
+
+        static void IRAM_ATTR _gpio_isr_handler(void* arg);
+        static bool _isr_service_installed;
+
+        void init();
 };
 
 struct mfrc_522_config{
@@ -153,7 +163,6 @@ class MFRC_522{
     public:
 
         MFRC_522(const mfrc_522_config& config);
-        esp_err_t init();
         bool check();
         std::string read_uid();
         void stop_reading();
@@ -163,10 +172,12 @@ class MFRC_522{
         const mfrc_522_config _config;
         spi_device_handle_t _spi_handle;
 
+        static bool _spi_bus_initialized;
+
         void write_regist(uint8_t reg, uint8_t value);
         uint8_t read_regist(uint8_t reg);
         void execute(uint8_t command);
+        esp_err_t init();
 };
 
-#endif
 #endif
