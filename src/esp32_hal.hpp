@@ -37,10 +37,10 @@ class DigitalInput {
 
         virtual ~DigitalInput() = default;
         DigitalInput(int port, gpio_pull_mode_t pull = GPIO_PULLDOWN_ONLY);
-        virtual int read();
+        virtual bool read();
 
     private:
-    
+
         gpio_num_t _pin;
         gpio_pull_mode_t _pull_mode;
 
@@ -48,7 +48,7 @@ class DigitalInput {
 };
 
 class AnalogInput {
-    
+
     public:
 
         virtual ~AnalogInput() = default;
@@ -80,7 +80,7 @@ class Output {
 };
 
 class Switch : public DigitalInput {
-    
+
     public:
 
         Switch(int port, gpio_pull_mode_t pull = GPIO_PULLDOWN_ONLY);
@@ -101,6 +101,15 @@ class Button : public DigitalInput {
         bool _last_state = 0;
         bool _actual_state = 0;
 };
+
+class LM393 : public DigitalInput {
+
+    public:
+
+        LM393(int port, gpio_pull_mode_t pull = GPIO_FLOATING);
+
+        bool read() override;
+}
 
 class Servo {
 
@@ -126,7 +135,7 @@ class Potentiometer : public AnalogInput {
 
     public:
 
-        Potentiometer(int port);      
+        Potentiometer(int port);
 };
 
 class Ultrasonic {
@@ -136,7 +145,7 @@ class Ultrasonic {
         ~Ultrasonic();
         Ultrasonic(int trig_port, int echo_port);
         float read_cm();
-    
+
     private:
 
         gpio_num_t _trig_pin;
@@ -159,14 +168,14 @@ struct mfrc_522_config{
     gpio_num_t reset;
 };
 class MFRC_522{
-    
+
     public:
 
         MFRC_522(const mfrc_522_config& config);
         bool check();
         std::string read_uid();
         void stop_reading();
-    
+
     private:
 
         const mfrc_522_config _config;

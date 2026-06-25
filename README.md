@@ -57,7 +57,7 @@ int state = input.read();
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `port` | `int` | GPIO pin number |
+| `port` | `int` | GPIO pin |
 | `pull` | `gpio_pull_mode_t` | `GPIO_PULLDOWN_ONLY`, `GPIO_PULLUP_ONLY`, or `GPIO_FLOATING`(default) |
 
 ---
@@ -109,6 +109,25 @@ btn.init();
 
 // Call repeatedly in a loop:
 bool toggled = btn.toggle(); // flips on each clean press
+```
+
+---
+
+### `LM393`
+Extends `DigitalInput`. read() override flips the logic to improve abstraction.
+
+```cpp
+// The LM393 sensor output is Active-Low (0 = Obstacle detected, 1 = Clear).
+// Inverting the logic makes the return value more intuitive (true = Obstacle).
+bool LM393::read() {
+    return !gpio_get_level(_pin);
+}
+
+LM393 sensor(18);
+
+if (sensor.read()) {
+    ESP_LOGI("SENSOR_TAG", "Obstacle ahead.");
+}
 ```
 
 ---
@@ -198,7 +217,7 @@ extern "C" void app_main() {
         .reset = GPIO_NUM_22
     };
     MFRC_522 rfid(rfid_cfg);
-    
+
     if (rfid.init() != ESP_OK) {
         printf("Failed to initialize MFRC_522\n");
     }

@@ -12,7 +12,7 @@
  * @date        2026-06-22
  * @license     Apache License 2.0
  * ============================================================================
- */ 
+ */
 
 #include "esp32_hal.hpp"
 #include "esp_log.h"
@@ -53,7 +53,7 @@ void DigitalInput::init(){
     } gpio_config(&io_conf);
 }
 
-int DigitalInput::read(){
+bool DigitalInput::read(){
     return gpio_get_level(_pin);
 }
 
@@ -85,7 +85,7 @@ void AnalogInput::init(){
 
     adc_oneshot_chan_cfg_t config = {};
     config.bitwidth = ADC_BITWIDTH_12;
-    config.atten = ADC_ATTEN_DB_12; 
+    config.atten = ADC_ATTEN_DB_12;
     adc_oneshot_config_channel(_adc_handle, _adc_channel, &config);
 }
 
@@ -147,6 +147,17 @@ bool Button::toggle(){
     }
     _last_state = _actual_state;
     return _switch_state;
+}
+
+//============================================
+// LM393
+//============================================
+
+LM393::LM393(int port, gpio_pull_mode_t pull)
+    : DigitalInput(port, pull) {}
+
+bool LM393::read() {
+    return !gpio_get_level(_pin);
 }
 
 //============================================
@@ -220,9 +231,9 @@ Ultrasonic::~Ultrasonic() {
 
 void IRAM_ATTR Ultrasonic::_gpio_isr_handler(void* arg) {
     Ultrasonic* sensor = static_cast<Ultrasonic*>(arg);
-    
+
     uint32_t level = gpio_get_level(sensor->_echo_pin);
-    
+
     if (level == 1) {
         sensor->_echo_start = esp_timer_get_time();
     } else {
@@ -230,10 +241,10 @@ void IRAM_ATTR Ultrasonic::_gpio_isr_handler(void* arg) {
         if (now > sensor->_echo_start) {
             sensor->_echo_duration = now - sensor->_echo_start;
         }
-        
+
         BaseType_t high_task_wakeup = pdFALSE;
         xSemaphoreGiveFromISR(sensor->_echo_semaphore, &high_task_wakeup);
-        
+
         if (high_task_wakeup) {
             portYIELD_FROM_ISR();
         }
@@ -260,7 +271,7 @@ void Ultrasonic::init() {
     gpio_config(&io_conf);
 
     if (!_isr_service_installed) {
-        gpio_install_isr_service(0); 
+        gpio_install_isr_service(0);
         _isr_service_installed = true;
     }
 
@@ -269,7 +280,7 @@ void Ultrasonic::init() {
 
 float Ultrasonic::read_cm() {
     xSemaphoreTake(_echo_semaphore, 0);
-    
+
     gpio_set_level(_trig_pin, 1);
     ets_delay_us(10);
     gpio_set_level(_trig_pin, 0);
@@ -375,25 +386,25 @@ void MFRC_522::execute(uint8_t command) {
 
 bool MFRC_522::check() {
     execute(PCD_Idle);
-    
-    write_regist(FIFOLevelReg, 0x80); 
+
+    write_regist(FIFOLevelReg, 0x80);
     write_regist(FIFODataReg, PICC_REQIDL);
     execute(PCD_Transceive);
     write_regist(BitFramingReg, 0x87);
-    
+
     vTaskDelay(pdMS_TO_TICKS(5));
-    
+
     uint8_t n = read_regist(FIFOLevelReg);
-    
+
     return (n > 0);
 }
 
 std::string MFRC_522::read_uid() {
     char uid_str[32];
     uint8_t uid_bytes[4] = {0x00, 0x00, 0x00, 0x00};
-    
+
     uint8_t n = read_regist(FIFOLevelReg);
-    
+
     if (n >= 4) {
         for (int i = 0; i < 4; i++) {
             uid_bytes[i] = read_regist(FIFODataReg);
@@ -402,9 +413,9 @@ std::string MFRC_522::read_uid() {
         return "";
     }
 
-    snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X", 
+    snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X",
              uid_bytes[0], uid_bytes[1], uid_bytes[2], uid_bytes[3]);
-             
+
     return std::string(uid_str);
 }
 
