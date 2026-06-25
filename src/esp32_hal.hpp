@@ -39,9 +39,12 @@ class DigitalInput {
         DigitalInput(int port, gpio_pull_mode_t pull = GPIO_PULLDOWN_ONLY);
         virtual bool read();
 
-    private:
+    protected:
 
         gpio_num_t _pin;
+
+    private:
+
         gpio_pull_mode_t _pull_mode;
 
         void init();
@@ -55,9 +58,12 @@ class AnalogInput {
         AnalogInput(int port);
         virtual int read();
 
-    private:
+    protected:
 
         gpio_num_t _pin;
+
+    private:
+
         static adc_oneshot_unit_handle_t _adc_handle;
         adc_channel_t _adc_channel;
         static bool _unit_initialized;
@@ -72,9 +78,11 @@ class Output {
         Output(int port);
         Output& write(bool src);
 
-    private:
+    protected:
 
         gpio_num_t _pin;
+
+    private:
 
         void init();
 };
@@ -109,7 +117,7 @@ class LM393 : public DigitalInput {
         LM393(int port, gpio_pull_mode_t pull = GPIO_FLOATING);
 
         bool read() override;
-}
+};
 
 class Servo {
 
